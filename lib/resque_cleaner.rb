@@ -117,25 +117,33 @@ module Resque
       # Retries every jobs for which block evaluates to true.
       def requeue(clear_after_requeue=false, options={}, &block)
         requeued = 0
-        queue = options["queue"] || options[:queue]
         @limiter.lock do
           @limiter.jobs.each_with_index do |job,i|
             if !block_given? || block.call(job)
               index = @limiter.start_index + i - requeued
 
               value = redis.lindex(:failed, index)
-              redis.multi do
-                Job.create(queue||job['queue'], job['payload']['class'], *job['payload']['args'])
+              klass = job['payload']['class'].constantize
 
-                if clear_after_requeue
-                  # remove job
-                  # TODO: should use ltrim. not sure why i used lrem here...
-                  redis.lrem(:failed, 1, value)
-                else
-                  # mark retried
-                  job['retried_at'] = Time.now.strftime("%Y/%m/%d %H:%M:%S")
-                  redis.lset(:failed, @limiter.start_index+i, Resque.encode(job))
-                end
+              args = job['payload']['args']
+              args = args[1,args.size-1] if klass.respond_to?(:priority?) || klass.respond_to?(:unique?)
+
+              if klass.respond_to?(:priority?)
+                klass.enqueue_with_priority(args.last, *args[0,args.size-1])
+              elsif klass.respond_to?(:unique?)
+                klass.enqueue(*args)
+              else
+                ::Resque.enqueue(klass, *args)
+              end
+
+              if clear_after_requeue
+                # remove job
+                # TODO: should use ltrim. not sure why i used lrem here...
+                redis.lrem(:failed, 1, value)
+              else
+                # mark retried
+                job['retried_at'] = Time.now.strftime("%Y/%m/%d %H:%M:%S")
+                redis.lset(:failed, @limiter.start_index+i, Resque.encode(job))
               end
 
               requeued += 1
