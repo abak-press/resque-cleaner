@@ -126,11 +126,11 @@ module Resque
               klass = job['payload']['class'].constantize
 
               args = job['payload']['args']
-              args = args[1,args.size-1] if klass.respond_to?(:priority?) || klass.respond_to?(:unique?)
+              args = args[1,args.size-1] if priority_job?(klass) || unique_job?(klass)
 
-              if klass.respond_to?(:priority?)
+              if priority_job?(klass)
                 klass.enqueue_with_priority(args.last, *args[0,args.size-1])
-              elsif klass.respond_to?(:unique?)
+              elsif unique_job?(klass)
                 klass.enqueue(*args)
               else
                 ::Resque.enqueue(klass, *args)
@@ -151,6 +151,14 @@ module Resque
           end
         end
         requeued
+      end
+
+      def priority_job?(klass)
+        klass.respond_to?(:priority?) && klass.priority?
+      end
+
+      def unique_job?(klass)
+        klass.respond_to?(:unique?) && klass.unique?
       end
 
       # Clears all jobs except the last X jobs
@@ -312,4 +320,3 @@ module Resque
 end
 
 require 'resque_cleaner/server'
-
